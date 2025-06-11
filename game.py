@@ -4,11 +4,14 @@ import sys
 # Screen dimensions
 WIDTH, HEIGHT = 800, 600
 FPS = 60
+FLOOR_HEIGHT = 50
+GRAVITY = 1
 
 # Player settings
 PLAYER_WIDTH, PLAYER_HEIGHT = 60, 90
 PLAYER_SPEED = 5
 JUMP_HEIGHT = 15
+ATTACK_RANGE = 20
 
 # Colors
 WHITE = (255, 255, 255)
@@ -67,11 +70,16 @@ def create_sprite(body_color, pants_color):
     return surf
 
 def draw_background(surface):
-    """Draw a simple gradient sky and floor."""
-    for y in range(HEIGHT - 50):
-        c = 60 + 120 * y // (HEIGHT - 50)
-        pygame.draw.line(surface, (0, c, 200), (0, y), (WIDTH, y))
-    pygame.draw.rect(surface, (60, 40, 20), (0, HEIGHT - 50, WIDTH, 50))
+    """Draw a simple gradient sky and ground."""
+    sky_top = (20, 20, 80)
+    sky_bottom = (255, 140, 0)
+    for y in range(HEIGHT - FLOOR_HEIGHT):
+        ratio = y / (HEIGHT - FLOOR_HEIGHT)
+        r = int(sky_top[0] + (sky_bottom[0] - sky_top[0]) * ratio)
+        g = int(sky_top[1] + (sky_bottom[1] - sky_top[1]) * ratio)
+        b = int(sky_top[2] + (sky_bottom[2] - sky_top[2]) * ratio)
+        pygame.draw.line(surface, (r, g, b), (0, y), (WIDTH, y))
+    pygame.draw.rect(surface, (60, 40, 20), (0, HEIGHT - FLOOR_HEIGHT, WIDTH, FLOOR_HEIGHT))
 
 def draw_health_bar(surface, x, y, pct, color):
     pygame.draw.rect(surface, BLACK, (x - 2, y - 2, 204, 24), 2)
@@ -88,6 +96,7 @@ class Player:
         self.on_ground = True
         self.health = 100
         self.attack_cooldown = 0
+        self.attack_effect_timer = 0
 
     def handle_input(self, keys):
         if keys[self.controls['left']]:
@@ -99,32 +108,46 @@ class Player:
             self.on_ground = False
         if keys[self.controls['attack']] and self.attack_cooldown == 0:
             self.attack_cooldown = FPS  # simple cooldown
+            self.attack_effect_timer = 10
+        # keep inside screen
+        if self.rect.left < 0:
+            self.rect.left = 0
+        if self.rect.right > WIDTH:
+            self.rect.right = WIDTH
 
     def update(self):
         # gravity
-        self.vel_y += 1
+        self.vel_y += GRAVITY
         self.rect.y += self.vel_y
-        if self.rect.bottom >= HEIGHT - 50:
-            self.rect.bottom = HEIGHT - 50
+        if self.rect.bottom >= HEIGHT - FLOOR_HEIGHT:
+            self.rect.bottom = HEIGHT - FLOOR_HEIGHT
             self.vel_y = 0
             self.on_ground = True
         if self.attack_cooldown > 0:
             self.attack_cooldown -= 1
+        if self.attack_effect_timer > 0:
+            self.attack_effect_timer -= 1
 
     def draw(self, surface):
         image = self.sprite
         if not self.facing_right:
             image = pygame.transform.flip(self.sprite, True, False)
         surface.blit(image, self.rect.topleft)
+        if self.attack_effect_timer > 0:
+            effect = pygame.Rect(0, 0, ATTACK_RANGE, PLAYER_HEIGHT // 2)
+            if self.facing_right:
+                effect.midleft = (self.rect.right, self.rect.centery)
+            else:
+                effect.midright = (self.rect.left, self.rect.centery)
+            pygame.draw.rect(surface, YELLOW, effect)
 
     def attack(self, other):
         if self.attack_cooldown == FPS - 1:  # attack triggers once when cooldown starts
-            hitbox = self.rect.copy()
-            hitbox.width += 20
+            hitbox = self.rect.inflate(ATTACK_RANGE, 0)
             if self.facing_right:
-                hitbox.x += 20
+                hitbox.left = self.rect.right
             else:
-                hitbox.x -= 20
+                hitbox.right = self.rect.left
             if hitbox.colliderect(other.rect):
                 other.health = max(0, other.health - 10)
 
@@ -150,14 +173,14 @@ def main():
 
     player1 = Player(
         100,
-        HEIGHT - PLAYER_HEIGHT - 50,
+        HEIGHT - PLAYER_HEIGHT - FLOOR_HEIGHT,
         (BLUE, YELLOW),
         controls1,
         facing_right=True,
     )
     player2 = Player(
         WIDTH - 160,
-        HEIGHT - PLAYER_HEIGHT - 50,
+        HEIGHT - PLAYER_HEIGHT - FLOOR_HEIGHT,
         (RED, GREEN),
         controls2,
         facing_right=False,
