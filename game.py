@@ -12,6 +12,8 @@ PLAYER_WIDTH, PLAYER_HEIGHT = 60, 90
 PLAYER_SPEED = 5
 JUMP_HEIGHT = 15
 ATTACK_RANGE = 20
+SPRITE_SHEET = "hero.png"
+SPRITE_FRAME_W, SPRITE_FRAME_H = 16, 18
 
 # Colors
 WHITE = (255, 255, 255)
@@ -22,52 +24,20 @@ GREEN = (0, 200, 0)
 YELLOW = (255, 255, 0)
 
 # -----------------------------------------------------------------------------
-# Helper functions to build a more colorful game
+# Helper functions and sprite handling
 # -----------------------------------------------------------------------------
-def create_sprite(body_color, pants_color):
-    """Create a simple humanoid sprite surface."""
-    surf = pygame.Surface((PLAYER_WIDTH, PLAYER_HEIGHT), pygame.SRCALPHA)
-    head_r = PLAYER_WIDTH // 4
-    body_top = head_r * 2
-    # head
-    pygame.draw.circle(surf, body_color, (PLAYER_WIDTH // 2, head_r), head_r)
-    # torso
-    torso_height = PLAYER_HEIGHT - body_top
-    upper = torso_height // 2
-    pygame.draw.rect(
-        surf,
-        body_color,
-        (PLAYER_WIDTH // 3, body_top, PLAYER_WIDTH // 3, upper),
-    )
-    # pants
-    pygame.draw.rect(
-        surf,
-        pants_color,
-        (PLAYER_WIDTH // 3, body_top + upper, PLAYER_WIDTH // 3, upper),
-    )
-    # arms
-    pygame.draw.rect(
-        surf,
-        body_color,
-        (PLAYER_WIDTH // 3 - 10, body_top + 10, PLAYER_WIDTH // 3 + 20, 10),
-    )
-    # legs
-    pygame.draw.rect(
-        surf,
-        pants_color,
-        (PLAYER_WIDTH // 3 - 5, body_top + upper + 10, 10, upper - 10),
-    )
-    pygame.draw.rect(
-        surf,
-        pants_color,
-        (
-            PLAYER_WIDTH // 3 + PLAYER_WIDTH // 3 - 5,
-            body_top + upper + 10,
-            10,
-            upper - 10,
-        ),
-    )
-    return surf
+def load_sprite_frames(path, frame_w, frame_h):
+    """Load a sprite sheet and return scaled frames."""
+    sheet = pygame.image.load(path).convert_alpha()
+    frames = []
+    rows = sheet.get_height() // frame_h
+    cols = sheet.get_width() // frame_w
+    for j in range(rows):
+        for i in range(cols):
+            frame = sheet.subsurface((i * frame_w, j * frame_h, frame_w, frame_h))
+            frame = pygame.transform.scale(frame, (PLAYER_WIDTH, PLAYER_HEIGHT))
+            frames.append(frame)
+    return frames
 
 def draw_background(surface):
     """Draw a simple gradient sky and ground."""
@@ -89,7 +59,8 @@ class Player:
     def __init__(self, x, y, sprite_colors, controls, facing_right=True):
         self.rect = pygame.Rect(x, y, PLAYER_WIDTH, PLAYER_HEIGHT)
         self.body_color, self.pants_color = sprite_colors
-        self.sprite = create_sprite(self.body_color, self.pants_color)
+        self.frames = load_sprite_frames(SPRITE_SHEET, SPRITE_FRAME_W, SPRITE_FRAME_H)
+        self.sprite = self.frames[0]
         self.controls = controls
         self.facing_right = facing_right
         self.vel_y = 0
@@ -97,6 +68,8 @@ class Player:
         self.health = 100
         self.attack_cooldown = 0
         self.attack_effect_timer = 0
+        self.remote_cooldown = 0
+        self.projectiles = []
 
     def handle_input(self, keys):
         if keys[self.controls['left']]:
@@ -109,6 +82,10 @@ class Player:
         if keys[self.controls['attack']] and self.attack_cooldown == 0:
             self.attack_cooldown = FPS  # simple cooldown
             self.attack_effect_timer = 10
+        if self.controls.get('ranged') and keys[self.controls['ranged']] and self.remote_cooldown == 0:
+            proj_x = self.rect.right if self.facing_right else self.rect.left - 10
+            self.projectiles.append(Projectile(proj_x, self.rect.centery, self.facing_right, self.body_color))
+            self.remote_cooldown = FPS
         # keep inside screen
         if self.rect.left < 0:
             self.rect.left = 0
@@ -125,13 +102,23 @@ class Player:
             self.on_ground = True
         if self.attack_cooldown > 0:
             self.attack_cooldown -= 1
+        if self.remote_cooldown > 0:
+            self.remote_cooldown -= 1
         if self.attack_effect_timer > 0:
             self.attack_effect_timer -= 1
+        for p in list(self.projectiles):
+            p.update()
+            if p.off_screen():
+                self.projectiles.remove(p)
 
     def draw(self, surface):
         image = self.sprite
+        if self.attack_effect_timer > 0:
+            image = self.frames[1 % len(self.frames)]
+        else:
+            image = self.frames[0]
         if not self.facing_right:
-            image = pygame.transform.flip(self.sprite, True, False)
+            image = pygame.transform.flip(image, True, False)
         surface.blit(image, self.rect.topleft)
         if self.attack_effect_timer > 0:
             effect = pygame.Rect(0, 0, ATTACK_RANGE, PLAYER_HEIGHT // 2)
@@ -140,6 +127,8 @@ class Player:
             else:
                 effect.midright = (self.rect.left, self.rect.centery)
             pygame.draw.rect(surface, YELLOW, effect)
+        for p in self.projectiles:
+            p.draw(surface)
 
     def attack(self, other):
         if self.attack_cooldown == FPS - 1:  # attack triggers once when cooldown starts
@@ -150,6 +139,27 @@ class Player:
                 hitbox.right = self.rect.left
             if hitbox.colliderect(other.rect):
                 other.health = max(0, other.health - 10)
+
+    def check_projectiles(self, other):
+        for p in list(self.projectiles):
+            if p.rect.colliderect(other.rect):
+                other.health = max(0, other.health - 5)
+                self.projectiles.remove(p)
+
+class Projectile:
+    def __init__(self, x, y, facing_right, color):
+        self.rect = pygame.Rect(x, y - 5, 10, 10)
+        self.speed = 7 if facing_right else -7
+        self.color = color
+
+    def update(self):
+        self.rect.x += self.speed
+
+    def off_screen(self):
+        return self.rect.right < 0 or self.rect.left > WIDTH
+
+    def draw(self, surface):
+        pygame.draw.rect(surface, self.color, self.rect)
 
 
 def main():
@@ -163,12 +173,14 @@ def main():
         'right': pygame.K_d,
         'jump': pygame.K_w,
         'attack': pygame.K_f,
+        'ranged': pygame.K_g,
     }
     controls2 = {
         'left': pygame.K_LEFT,
         'right': pygame.K_RIGHT,
         'jump': pygame.K_UP,
-        'attack': pygame.K_KP0,
+        'attack': pygame.K_l,
+        'ranged': pygame.K_o,
     }
 
     player1 = Player(
@@ -204,6 +216,8 @@ def main():
 
         player1.attack(player2)
         player2.attack(player1)
+        player1.check_projectiles(player2)
+        player2.check_projectiles(player1)
 
         draw_background(screen)
         player1.draw(screen)
